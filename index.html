@@ -52,19 +52,20 @@
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(72px,1fr)); gap: 5px; margin-top: 10px; max-height: 220px; overflow-y: auto; }
   .thumb { aspect-ratio: 1; border-radius: 5px; object-fit: cover; width: 100%; background: var(--bg2); }
   .warning { background: #FAEEDA; border: 0.5px solid #FAC775; border-radius: var(--radius-sm); padding: 10px 12px; font-size: 12px; color: #633806; margin-top: 10px; line-height: 1.6; }
+  .info { background: #E6F1FB; border: 0.5px solid #B5D4F4; border-radius: var(--radius-sm); padding: 10px 12px; font-size: 12px; color: #0C447C; margin-top: 10px; line-height: 1.6; }
 </style>
 </head>
 <body>
 <div class="container">
   <h1>Google Photos Downloader</h1>
-  <p class="subtitle">Скачать все фотографии из Google Photos на компьютер</p>
+  <p class="subtitle">Скачать фотографии из Google Photos на компьютер</p>
 
   <div class="card" id="card1">
     <div class="card-header">
       <div class="num active" id="num1">1</div>
       <div class="card-title">Войди в Google</div>
     </div>
-    <p class="desc">Нажми кнопку — откроется окно авторизации. Войди в нужный аккаунт.</p>
+    <p class="desc">Нажми кнопку — откроется окно авторизации Google.</p>
     <div style="margin-top: 10px;">
       <button class="btn primary" onclick="startAuth()">Войти через Google</button>
     </div>
@@ -74,18 +75,31 @@
   <div class="card disabled" id="card2">
     <div class="card-header">
       <div class="num" id="num2">2</div>
-      <div class="card-title">Скачать фотографии</div>
+      <div class="card-title">Выбери фото через Picker</div>
+    </div>
+    <p class="desc">Откроется официальный Google Photos Picker — выбери все фото которые хочешь скачать.</p>
+    <div class="info">Picker API не требует верификации приложения — работает сразу для любого аккаунта.</div>
+    <div style="margin-top: 10px;">
+      <button class="btn primary" id="pickerBtn" onclick="openPicker()" disabled>Открыть Google Photos</button>
+    </div>
+    <div id="pickerStatus"></div>
+  </div>
+
+  <div class="card disabled" id="card3">
+    <div class="card-header">
+      <div class="num" id="num3">3</div>
+      <div class="card-title">Скачать выбранные фото</div>
     </div>
     <div id="statsWrap" style="display:none">
       <div class="stats">
-        <div class="stat"><div class="stat-val" id="statTotal">—</div><div class="stat-label">всего фото</div></div>
+        <div class="stat"><div class="stat-val" id="statTotal">—</div><div class="stat-label">выбрано фото</div></div>
         <div class="stat"><div class="stat-val" id="statDone">0</div><div class="stat-label">скачано</div></div>
         <div class="stat"><div class="stat-val" id="statSize">—</div><div class="stat-label">≈ объём</div></div>
       </div>
     </div>
     <div style="display:flex; gap:8px; margin-top:10px; flex-wrap:wrap;">
-      <button class="btn primary" id="scanBtn" onclick="scanPhotos()" disabled>Подсчитать фото</button>
-      <button class="btn" id="dlBtn" onclick="startDownload()" disabled>Скачать всё</button>
+      <button class="btn primary" id="dlBtn" onclick="startDownload()" disabled>Скачать всё</button>
+      <button class="btn" id="moreBtn" onclick="openPicker()" disabled>Добавить ещё</button>
     </div>
     <div id="progressWrap" style="display:none" class="progress-wrap">
       <div class="progress-info">
@@ -96,21 +110,16 @@
       <div id="thumbGrid" class="grid"></div>
     </div>
     <div class="warning" id="dlWarning" style="display:none">
-      Браузер скачивает файлы по одному. Чтобы сохранить сразу на внешний диск — перед стартом измени папку загрузок в настройках Chrome на нужный диск.
+      Браузер скачивает файлы по одному. Чтобы сохранить сразу на внешний диск — перед стартом измени папку загрузок в настройках Chrome.
     </div>
   </div>
 </div>
 
+<script src="https://apis.google.com/js/api.js"></script>
 <script>
 const CLIENT_ID = '323136542566-95q5sfbqpkmhrmocc9gv8ido18avkc53.apps.googleusercontent.com';
-let accessToken = '', allItems = [];
-
-function startAuth() {
-  const scope = encodeURIComponent('https://www.googleapis.com/auth/photoslibrary.readonly');
-  const redirect = encodeURIComponent(location.href.split('#')[0]);
-  const url = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${CLIENT_ID}&redirect_uri=${redirect}&response_type=token&scope=${scope}&prompt=consent`;
-  location.href = url;
-}
+const API_KEY = '';
+let accessToken = '', allItems = [], tokenClient;
 
 function checkToken() {
   const hash = location.hash;
@@ -124,49 +133,126 @@ function checkToken() {
   }
 }
 
+function startAuth() {
+  const scope = encodeURIComponent('https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/photospicker.mediaitems.readonly');
+  const redirect = encodeURIComponent(location.href.split('#')[0]);
+  const url = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${CLIENT_ID}&redirect_uri=${redirect}&response_type=token&scope=${scope}&prompt=consent`;
+  location.href = url;
+}
+
 function onAuthSuccess() {
   document.getElementById('authStatus').innerHTML = '<div class="status"><div class="dot green"></div><span>Авторизован успешно</span></div>';
   document.getElementById('num1').className = 'num done';
   document.getElementById('num1').textContent = '✓';
   document.getElementById('num2').className = 'num active';
   document.getElementById('card2').classList.remove('disabled');
-  document.getElementById('scanBtn').disabled = false;
+  document.getElementById('pickerBtn').disabled = false;
 }
 
-async function scanPhotos() {
-  document.getElementById('scanBtn').textContent = 'Считаю...';
-  document.getElementById('scanBtn').disabled = true;
-  document.getElementById('statsWrap').style.display = 'block';
-  allItems = [];
-  let nextPageToken = '', count = 0;
+async function openPicker() {
   try {
-    do {
-      const url = 'https://photoslibrary.googleapis.com/v1/mediaItems?pageSize=100' + (nextPageToken ? '&pageToken=' + nextPageToken : '');
-      const res = await fetch(url, { headers: { Authorization: 'Bearer ' + accessToken } });
-      const data = await res.json();
-      if (data.error) { alert('Ошибка: ' + data.error.message); break; }
-      if (data.mediaItems) { allItems = allItems.concat(data.mediaItems); count += data.mediaItems.length; }
-      document.getElementById('statTotal').textContent = count.toLocaleString();
-      document.getElementById('statSize').textContent = '~' + Math.round(count * 4 / 1024) + ' ГБ';
-      nextPageToken = data.nextPageToken || '';
-    } while (nextPageToken);
-    document.getElementById('scanBtn').textContent = 'Пересчитать';
-    document.getElementById('scanBtn').disabled = false;
-    document.getElementById('dlBtn').disabled = false;
-    document.getElementById('dlWarning').style.display = 'block';
+    // Create a new session
+    const sessionRes = await fetch('https://photospicker.googleapis.com/v1/sessions', {
+      method: 'POST',
+      headers: {
+        'Authorization': 'Bearer ' + accessToken,
+        'Content-Type': 'application/json'
+      }
+    });
+    const session = await sessionRes.json();
+
+    if (session.error) {
+      // Fallback to Drive Picker
+      openDrivePicker();
+      return;
+    }
+
+    // Open picker URL
+    const pickerWindow = window.open(session.pickerUri, '_blank', 'width=800,height=600');
+
+    document.getElementById('pickerStatus').innerHTML = '<div class="status"><div class="dot" style="background:#FAC775"></div><span>Выбери фото в открывшемся окне, затем вернись сюда</span></div>';
+
+    // Poll for session completion
+    const pollInterval = setInterval(async () => {
+      const pollRes = await fetch(`https://photospicker.googleapis.com/v1/sessions/${session.id}`, {
+        headers: { 'Authorization': 'Bearer ' + accessToken }
+      });
+      const pollData = await pollRes.json();
+
+      if (pollData.mediaItemsSet) {
+        clearInterval(pollInterval);
+        if (pickerWindow) pickerWindow.close();
+        await loadPickerItems(session.id);
+      }
+    }, 2000);
+
   } catch(e) {
-    alert('Ошибка: ' + e.message);
-    document.getElementById('scanBtn').textContent = 'Подсчитать фото';
-    document.getElementById('scanBtn').disabled = false;
+    openDrivePicker();
   }
 }
 
+async function loadPickerItems(sessionId) {
+  let nextPageToken = '', items = [];
+  do {
+    const url = `https://photospicker.googleapis.com/v1/mediaItems?sessionId=${sessionId}&pageSize=100` + (nextPageToken ? '&pageToken=' + nextPageToken : '');
+    const res = await fetch(url, { headers: { 'Authorization': 'Bearer ' + accessToken } });
+    const data = await res.json();
+    if (data.mediaItems) items = items.concat(data.mediaItems);
+    nextPageToken = data.nextPageToken || '';
+  } while (nextPageToken);
+
+  allItems = allItems.concat(items);
+  onItemsLoaded();
+}
+
+function openDrivePicker() {
+  gapi.load('picker', () => {
+    const picker = new google.picker.PickerBuilder()
+      .addView(new google.picker.PhotosView())
+      .setOAuthToken(accessToken)
+      .setCallback(pickerCallback)
+      .enableFeature(google.picker.Feature.MULTISELECT_ENABLED)
+      .build();
+    picker.setVisible(true);
+  });
+}
+
+function pickerCallback(data) {
+  if (data.action === google.picker.Action.PICKED) {
+    const docs = data[google.picker.Response.DOCUMENTS];
+    const items = docs.map(d => ({
+      id: d.id,
+      filename: d.name,
+      baseUrl: d.url,
+      mimeType: d.mimeType
+    }));
+    allItems = allItems.concat(items);
+    onItemsLoaded();
+  }
+}
+
+function onItemsLoaded() {
+  const count = allItems.length;
+  document.getElementById('pickerStatus').innerHTML = `<div class="status"><div class="dot green"></div><span>Выбрано фото: ${count}</span></div>`;
+  document.getElementById('num2').className = 'num done';
+  document.getElementById('num2').textContent = '✓';
+  document.getElementById('num3').className = 'num active';
+  document.getElementById('card3').classList.remove('disabled');
+  document.getElementById('statsWrap').style.display = 'block';
+  document.getElementById('statTotal').textContent = count.toLocaleString();
+  document.getElementById('statSize').textContent = '~' + Math.round(count * 4 / 1024) + ' ГБ';
+  document.getElementById('dlBtn').disabled = false;
+  document.getElementById('moreBtn').disabled = false;
+  document.getElementById('dlWarning').style.display = 'block';
+}
+
 async function startDownload() {
-  if (!allItems.length) { alert('Сначала нажми "Подсчитать фото"'); return; }
+  if (!allItems.length) return;
   document.getElementById('progressWrap').style.display = 'block';
   document.getElementById('dlBtn').disabled = true;
   const grid = document.getElementById('thumbGrid');
   grid.innerHTML = '';
+
   for (let i = 0; i < allItems.length; i++) {
     const item = allItems[i];
     const pct = Math.round(i / allItems.length * 100);
@@ -174,21 +260,34 @@ async function startDownload() {
     document.getElementById('progressPct').textContent = pct + '%';
     document.getElementById('progressLabel').textContent = `Скачиваю ${i+1} из ${allItems.length}`;
     document.getElementById('statDone').textContent = i;
+
     try {
-      const isVideo = item.mediaMetadata && item.mediaMetadata.video;
-      const a = document.createElement('a');
-      a.href = item.baseUrl + (isVideo ? '=dv' : '=d');
-      a.download = item.filename || ('photo_' + i);
-      document.body.appendChild(a); a.click(); document.body.removeChild(a);
-      if (grid.children.length < 60) {
+      let downloadUrl = '';
+      if (item.mediaFile && item.mediaFile.baseUrl) {
+        const isVideo = item.mediaFile.mediaType && item.mediaFile.mediaType.includes('video');
+        downloadUrl = item.mediaFile.baseUrl + (isVideo ? '=dv' : '=d');
+      } else if (item.baseUrl) {
+        downloadUrl = item.baseUrl;
+      }
+
+      if (downloadUrl) {
+        const a = document.createElement('a');
+        a.href = downloadUrl;
+        a.download = item.filename || item.id || ('photo_' + i);
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      }
+
+      if (grid.children.length < 60 && (item.mediaFile?.baseUrl || item.baseUrl)) {
         const img = document.createElement('img');
-        img.src = item.baseUrl + '=w72-h72-c';
+        img.src = (item.mediaFile?.baseUrl || item.baseUrl) + '=w72-h72-c';
         img.className = 'thumb'; img.alt = '';
         grid.appendChild(img);
       }
+
       await new Promise(r => setTimeout(r, 800));
-    } catch(e) { console.error(item.filename, e); }
+    } catch(e) { console.error(e); }
   }
+
   document.getElementById('progressFill').style.width = '100%';
   document.getElementById('progressPct').textContent = '100%';
   document.getElementById('progressLabel').textContent = 'Готово!';
